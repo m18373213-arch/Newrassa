@@ -1,207 +1,137 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Updater, CommandHandler, CallbackQueryHandler,
+    MessageHandler, Filters
+)
+import requests
+from datetime import datetime, timedelta
 
-# C extensions
-*.so
+# Конфиг с ВАШИМИ ДАННЫМИ
+TOKEN = "8088362748:AAFeigq0Ev-KigaqkHFVPn23wCp9Y1DKtPA"  # Токен бота
+ADMIN_PASS = "admin123"   # Пароль для админов (можете поменять)
+API_KEY = "425339:AAq3wYp9MQvSNQhnXSFbRi7OTtLP6tW4jkH"  # Ваш API-ключ
+CRYPTO_TOKEN = "425341:AARflakwvRtHrdI4snHA22y2uNKytmyEZDE8322768072:AAHpIJNK8sq84CPO1ApN76tBMW9XbyhAWRw"  # Получите у @CryptoBot
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Тарифы (USD)
+PRICES = {
+    '1day': 3, '1week': 5, '1month': 10,
+    '1year': 50, 'forever': 150
+}
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Временное хранилище данных
+users = {}
+payments = {}
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Настройка логов
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
+def start(update: Update, context):
+    user = update.effective_user
+    buttons = [
+        [InlineKeyboardButton("💰 Подписка", callback_data='subscribe')],
+        [InlineKeyboardButton("🔍 Проверить номер", callback_data='lookup')]
+    ]
+    update.message.reply_text(
+        f"Привет, {user.first_name}!\nВыберите действие:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
-# Translations
-*.mo
-*.pot
+def check_subscription(user_id):
+    return user_id in users.get('paid', [])
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+def lookup_number(update: Update, context):
+    query = update.callback_query
+    query.answer()
+    
+    if not check_subscription(query.from_user.id):
+        query.edit_message_text("❌ Нужна подписка! Нажмите /start")
+        return
+    
+    query.edit_message_text("Отправьте номер в формате +79991234567:")
 
-# Flask stuff:
-instance/
-.webassets-cache
+def handle_number(update: Update, context):
+    phone = update.message.text
+    user_id = update.effective_user.id
+    
+    try:
+        data = requests.get(
+            f"https://api.numlookupapi.com/v1/validate/{phone}?apikey={API_KEY}"
+        ).json()
+        
+        update.message.reply_text(
+            f"📱 Номер: {phone}\n"
+            f"🌍 Страна: {data.get('country_name', 'N/A')}\n"
+            f"🏢 Оператор: {data.get('carrier', 'N/A')}"
+        )
+    except Exception as e:
+        update.message.reply_text(f"❌ Ошибка: {e}")
 
-# Scrapy stuff:
-.scrapy
+def show_subscriptions(update: Update, context):
+    query = update.callback_query
+    query.answer()
+    
+    buttons = [
+        [InlineKeyboardButton(f"1 день - ${PRICES['1day']}", callback_data='pay_1day')],
+        [InlineKeyboardButton(f"1 неделя - ${PRICES['1week']}", callback_data='pay_1week')],
+        [InlineKeyboardButton(f"1 месяц - ${PRICES['1month']}", callback_data='pay_1month')],
+        [InlineKeyboardButton(f"1 год - ${PRICES['1year']}", callback_data='pay_1year')],
+        [InlineKeyboardButton("Навсегда - $150", callback_data='pay_forever')]
+    ]
+    
+    query.edit_message_text(
+        "💰 Выберите тариф:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
-# Sphinx documentation
-docs/_build/
+def create_payment(update: Update, context):
+    query = update.callback_query
+    sub_type = query.data.replace('pay_', '')
+    amount = PRICES[sub_type]
+    
+    # Заглушка для платежей (реальная интеграция с CryptoBot)
+    payment_url = f"https://t.me/CryptoBot?start={TOKEN}_{sub_type}"
+    buttons = [[InlineKeyboardButton("💳 Оплатить", url=payment_url)]]
+    
+    query.edit_message_text(
+        f"Оплатите {amount} USDT:\n{payment_url}",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
-# PyBuilder
-.pybuilder/
-target/
+def admin_login(update: Update, context):
+    update.message.reply_text("🔑 Введите пароль админа:")
 
-# Jupyter Notebook
-.ipynb_checkpoints
+def check_admin(update: Update, context):
+    if update.message.text == ADMIN_PASS:
+        user_id = update.effective_user.id
+        if 'admins' not in users:
+            users['admins'] = []
+        users['admins'].append(user_id)
+        update.message.reply_text("✅ Вы стали администратором!")
 
-# IPython
-profile_default/
-ipython_config.py
+def main():
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+    
+    # Команды
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("admin", admin_login))
+    
+    # Кнопки
+    dp.add_handler(CallbackQueryHandler(show_subscriptions, pattern='^subscribe$'))
+    dp.add_handler(CallbackQueryHandler(lookup_number, pattern='^lookup$'))
+    dp.add_handler(CallbackQueryHandler(create_payment, pattern='^pay_'))
+    
+    # Сообщения
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_number))
+    dp.add_handler(MessageHandler(Filters.text & Filters.regex(ADMIN_PASS), check_admin))
+    
+    updater.start_polling()
+    updater.idle()
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-#poetry.toml
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-#pdm.lock
-#pdm.toml
-.pdm-python
-.pdm-build/
-
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-
-# Ruff stuff:
-.ruff_cache/
-
-# PyPI configuration file
-.pypirc
-
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
+if __name__ == "__main__":
+    main()
